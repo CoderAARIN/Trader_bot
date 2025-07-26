@@ -1,0 +1,139 @@
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+import json
+import os
+import re
+import random
+
+USER_FILE = "user_data.json"
+
+class StockApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("StockTrader Registration")
+        self.root.geometry("400x500")
+        self.root.configure(bg="#f4f4f4")
+        self.user_data = {}
+
+        self.load_user_data()
+        self.build_startup_ui()
+
+    def load_user_data(self):
+        if os.path.exists(USER_FILE):
+            with open(USER_FILE, 'r') as f:
+                try:
+                    self.user_data = json.load(f)
+                except json.JSONDecodeError:
+                    self.user_data = {}
+
+    def save_user_data(self):
+        with open(USER_FILE, 'w') as f:
+            json.dump(self.user_data, f)
+
+    def clear_window(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+    def build_startup_ui(self):
+        self.clear_window()
+
+        if "name" in self.user_data:
+            # User has already signed in before
+            tk.Label(self.root, text=f"Welcome back, {self.user_data['name']}!", font=("Arial", 12), bg="#f4f4f4").pack(pady=20)
+            tk.Button(self.root, text="Sign Out", command=self.sign_out, bg="red", fg="white").pack(pady=10)
+        else:
+            tk.Label(self.root, text="Welcome to StockTrader!", font=("Arial", 14, "bold"), bg="#f4f4f4").pack(pady=20)
+            tk.Button(self.root, text="Sign In", width=15, command=self.build_registration_ui).pack(pady=10)
+            tk.Button(self.root, text="Continue", width=15, command=self.continue_user).pack(pady=10)
+
+    def continue_user(self):
+        name = simpledialog.askstring("Enter Name", "What should we call you?")
+        if name:
+            self.user_data = {"name": name}
+            self.save_user_data()
+            self.build_startup_ui()
+
+    def sign_out(self):
+        if os.path.exists(USER_FILE):
+            os.remove(USER_FILE)
+        self.user_data = {}
+        self.build_startup_ui()
+
+    def build_registration_ui(self):
+        self.clear_window()
+
+        tk.Label(self.root, text="📝 Create your StockTrader Account", font=("Helvetica", 14, "bold"), bg="#f4f4f4").pack(pady=10)
+
+        self.name_entry = self.add_entry("Full Name")
+        self.dob_entry = self.add_entry("Date of Birth (YYYY-MM-DD)")
+        self.email_entry = self.add_entry("Email")
+        self.password_entry = self.add_entry("Password", show="*")
+        self.phone_entry = self.add_entry("Mobile Number")
+
+        tk.Button(self.root, text="Submit", font=("Arial", 10, "bold"), bg="#d1d1d1", command=self.validate_and_submit).pack(pady=20)
+
+    def add_entry(self, label, show=None):
+        tk.Label(self.root, text=label, bg="#f4f4f4", anchor='w', font=("Arial", 10, "bold")).pack(fill="x", padx=30)
+        entry = tk.Entry(self.root, width=30, show=show)
+        entry.pack(padx=30, pady=5)
+        return entry
+
+    def validate_and_submit(self):
+        name = self.name_entry.get().strip()
+        dob = self.dob_entry.get().strip()
+        email = self.email_entry.get().strip()
+        password = self.password_entry.get().strip()
+        phone = self.phone_entry.get().strip()
+
+        if not all([name, dob, email, password, phone]):
+            messagebox.showerror("Error", "All fields are required!")
+            return
+
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", dob):
+            messagebox.showerror("Error", "DOB must be in YYYY-MM-DD format.")
+            return
+
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            messagebox.showerror("Error", "Invalid email address.")
+            return
+
+        if len(password) < 6 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+            messagebox.showerror("Error", "Password must be at least 6 characters and include letters and numbers.")
+            return
+
+        if not re.match(r"^\d{10}$", phone):
+            messagebox.showerror("Error", "Phone number must be 10 digits.")
+            return
+
+        # Simulate Email OTP
+        email_otp = str(random.randint(10, 99))
+        messagebox.showinfo("Email OTP", f"Simulated Email OTP: {email_otp}")
+        user_email_otp = simpledialog.askstring("OTP", "Enter the 2-digit OTP:")
+        if user_email_otp != email_otp:
+            messagebox.showerror("Error", "Incorrect Email OTP.")
+            return
+
+        # Simulate SMS OTP
+        sms_otp = str(random.randint(100000, 999999))
+        messagebox.showinfo("SMS OTP", f"Simulated SMS OTP: {sms_otp}")
+        user_sms_otp = simpledialog.askstring("OTP", "Enter the 6-digit OTP:")
+        if user_sms_otp != sms_otp:
+            messagebox.showerror("Error", "Incorrect SMS OTP.")
+            return
+
+        # Save User
+        self.user_data = {
+            "name": name,
+            "dob": dob,
+            "email": email,
+            "password": password,
+            "phone": phone
+        }
+        self.save_user_data()
+        messagebox.showinfo("Success", "Registration Complete!")
+        self.build_startup_ui()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = StockApp(root)
+    root.mainloop()
