@@ -1,0 +1,555 @@
+import tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
+import json
+import os
+import re
+import random
+import hashlib
+import time
+import threading
+
+USER_FILE = os.path.join(os.path.dirname(__file__), "user_data.json")
+
+def hash_password(password):
+    """Hash a password for secure storage."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+class ToolTip:
+    """Simple tooltip for widgets."""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tipwindow = None
+        widget.bind("<Enter>", self.show_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tipwindow or not self.text:
+            return
+        x, y, _, cy = self.widget.bbox("insert")
+        x = x + self.widget.winfo_rootx() + 25
+        y = y + cy + self.widget.winfo_rooty() + 25
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify='left',
+                         background="#ffffe0", relief='solid', borderwidth=1,
+                         font=("tahoma", "10", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tip(self, event=None):
+        tw = self.tipwindow
+        self.tipwindow = None
+        if tw:
+            tw.destroy()
+
+class StockApp:
+    """Main application class for StockTrader."""
+    def __init__(self, root):
+        self.root = root
+        self.root.title("StockTrader")
+        self.root.geometry("900x650")
+        self.theme = "light"
+        self.user_data = {}
+        self.logged_in = False
+        self.status_var = tk.StringVar()
+        self.status_var.set("Welcome to StockTrader!")
+        self.last_activity = time.time()
+        self.logout_timer = None
+        self.transaction_history = []
+        self.load_user_data()
+        self.apply_theme()
+        self.build_main_menu()
+        self.start_logout_timer()
+
+    def apply_theme(self):
+        """Apply the current theme to the root window."""
+        if self.theme == "light":
+            self.bg_color = "#f4f4f4"
+            self.fg_color = "#222831"
+            self.button_bg = "#00adb5"
+            self.button_fg = "#fff"
+            self.sidebar_bg = "#222831"
+            self.sidebar_fg = "#fff"
+            self.status_bg = "#eeeeee"
+        else:
+            self.bg_color = "#23272e"
+            self.fg_color = "#eeeeee"
+            self.button_bg = "#393e46"
+            self.button_fg = "#fff"
+            self.sidebar_bg = "#111317"
+            self.sidebar_fg = "#fff"
+            self.status_bg = "#393e46"
+        self.root.configure(bg=self.bg_color)
+
+    def switch_theme(self):
+        """Switch between light and dark themes."""
+        self.theme = "dark" if self.theme == "light" else "light"
+        self.apply_theme()
+        self.status_var.set(f"Theme switched to {self.theme.capitalize()}.")
+        self.build_main_menu()
+
+    def load_user_data(self):
+        """Load user data from file."""
+        if os.path.exists(USER_FILE):
+            with open(USER_FILE, 'r') as f:
+                try:
+                    self.user_data = json.load(f)
+                    self.transaction_history = self.user_data.get("transactions", [])
+                except json.JSONDecodeError:
+                    self.user_data = {}
+                    self.transaction_history = []
+
+    def save_user_data(self):
+        """Save user data to file."""
+        self.user_data["transactions"] = self.transaction_history
+        with open(USER_FILE, 'w') as f:
+            json.dump(self.user_data, f)
+
+    def clear_window(self):
+        """Clear all widgets from the root window."""
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+    def build_sidebar(self, parent):
+        """Build the sidebar navigation."""
+        sidebar = tk.Frame(parent, bg=self.sidebar_bg, width=200)
+        sidebar.pack(side="left", fill="y")
+        tk.Label(sidebar, text="☰ Menu", bg=self.sidebar_bg, fg=self.sidebar_fg, font=("Arial", 16, "bold")).pack(pady=20)
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=10, pady=5)
+        tk.Button(sidebar, text="Dashboard", width=18, command=self.build_dashboard, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Transactions", width=18, command=self.build_transactions, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Profile", width=18, command=self.build_profile, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Change Password", width=18, command=self.build_change_password, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Theme Switcher", width=18, command=self.switch_theme, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Help/About", width=18, command=self.show_about, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Contact Support", width=18, command=self.contact_support, bg=self.button_bg, fg=self.button_fg, font=("Arial", 12)).pack(pady=10)
+        tk.Button(sidebar, text="Delete Account", width=18, command=self.delete_account, bg="#d72323", fg="#fff", font=("Arial", 12, "bold")).pack(pady=10)
+        tk.Button(sidebar, text="Sign Out", width=18, command=self.sign_out, bg="#d72323", fg="#fff", font=("Arial", 12, "bold")).pack(pady=10)
+        return sidebar
+
+    def build_status_bar(self):
+        """Build the status bar at the bottom."""
+        status = tk.Label(self.root, textvariable=self.status_var, bd=1, relief="sunken", anchor="w", bg=self.status_bg, fg=self.fg_color)
+        status.pack(side="bottom", fill="x")
+
+    def build_main_menu(self):
+        """Build the main menu (home screen)."""
+        self.clear_window()
+        self.apply_theme()
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(expand=True, fill="both")
+        self.build_status_bar()
+        tk.Label(main_frame, text="📈 StockTrader", font=("Arial", 32, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=40)
+        if self.logged_in:
+            tk.Label(main_frame, text=f"Welcome, {self.user_data.get('name', 'User')}!", font=("Arial", 18), bg=self.bg_color, fg=self.fg_color).pack(pady=10)
+            tk.Button(main_frame, text="Go to Dashboard", width=22, command=self.build_dashboard, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Profile", width=22, command=self.build_profile, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Transactions", width=22, command=self.build_transactions, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Sign Out", width=22, command=self.sign_out, font=("Arial", 15), bg="#d72323", fg="#fff").pack(pady=10)
+        else:
+            tk.Button(main_frame, text="Login", width=22, command=self.build_login_ui, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Register", width=22, command=self.build_registration_ui, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Forgot Password", width=22, command=self.build_forgot_password_ui, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Help/About", width=22, command=self.show_about, font=("Arial", 15), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+            tk.Button(main_frame, text="Exit", width=22, command=self.root.quit, font=("Arial", 15), bg=self.status_bg, fg=self.fg_color).pack(pady=10)
+
+    def build_login_ui(self):
+        """Build the login screen."""
+        self.clear_window()
+        self.apply_theme()
+        frame = tk.Frame(self.root, bg=self.bg_color)
+        frame.pack(expand=True, fill="both")
+        self.build_status_bar()
+        tk.Label(frame, text="🔐 Login to StockTrader", font=("Arial", 24, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=30)
+        email_entry = self.add_entry(frame, "Email", tooltip="Enter your registered email")
+        password_entry = self.add_entry(frame, "Password", show="*", tooltip="Enter your password")
+
+        def login_action():
+            self.update_activity()
+            email = email_entry.get().strip()
+            password = password_entry.get().strip()
+            if not email or not password:
+                self.status_var.set("Please enter both email and password.")
+                messagebox.showerror("Error", "Please enter both email and password.")
+                return
+            if self.user_data.get("email") == email and self.user_data.get("password") == hash_password(password):
+                self.logged_in = True
+                self.status_var.set("Login successful!")
+                messagebox.showinfo("Success", "Login successful!")
+                self.build_main_menu()
+            else:
+                self.status_var.set("Invalid email or password.")
+                messagebox.showerror("Error", "Invalid email or password.")
+
+        tk.Button(frame, text="Login", font=("Arial", 15, "bold"), bg=self.button_bg, fg=self.button_fg, command=login_action).pack(pady=20)
+        tk.Button(frame, text="Back", command=self.build_main_menu, font=("Arial", 13)).pack()
+
+    def build_registration_ui(self):
+        """Build the registration screen."""
+        self.clear_window()
+        self.apply_theme()
+        frame = tk.Frame(self.root, bg=self.bg_color)
+        frame.pack(expand=True, fill="both")
+        self.build_status_bar()
+        tk.Label(frame, text="📝 Register for StockTrader", font=("Arial", 24, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=30)
+        name_entry = self.add_entry(frame, "Full Name", tooltip="Enter your full name")
+        dob_entry = self.add_entry(frame, "Date of Birth (YYYY-MM-DD)", tooltip="Format: YYYY-MM-DD")
+        email_entry = self.add_entry(frame, "Email", tooltip="Enter a valid email address")
+        password_entry = self.add_entry(frame, "Password", show="*", tooltip="At least 6 chars, letters & numbers")
+        phone_entry = self.add_entry(frame, "Mobile Number", tooltip="10 digit mobile number")
+
+        def register_action():
+            self.update_activity()
+            name = name_entry.get().strip()
+            dob = dob_entry.get().strip()
+            email = email_entry.get().strip()
+            password = password_entry.get().strip()
+            phone = phone_entry.get().strip()
+
+            if not all([name, dob, email, password, phone]):
+                self.status_var.set("All fields are required!")
+                messagebox.showerror("Error", "All fields are required!")
+                return
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", dob):
+                self.status_var.set("DOB must be in YYYY-MM-DD format.")
+                messagebox.showerror("Error", "DOB must be in YYYY-MM-DD format.")
+                return
+            if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                self.status_var.set("Invalid email address.")
+                messagebox.showerror("Error", "Invalid email address.")
+                return
+            if len(password) < 6 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+                self.status_var.set("Password must be at least 6 characters and include letters and numbers.")
+                messagebox.showerror("Error", "Password must be at least 6 characters and include letters and numbers.")
+                return
+            if not re.match(r"^\d{10}$", phone):
+                self.status_var.set("Phone number must be 10 digits.")
+                messagebox.showerror("Error", "Phone number must be 10 digits.")
+                return
+
+            # Simulate Email OTP
+            email_otp = str(random.randint(10, 99))
+            messagebox.showinfo("Email OTP", f"Simulated Email OTP: {email_otp}")
+            user_email_otp = simpledialog.askstring("OTP", "Enter the 2-digit OTP:")
+            if user_email_otp != email_otp:
+                self.status_var.set("Incorrect Email OTP.")
+                messagebox.showerror("Error", "Incorrect Email OTP.")
+                return
+
+            # Simulate SMS OTP
+            sms_otp = str(random.randint(100000, 999999))
+            messagebox.showinfo("SMS OTP", f"Simulated SMS OTP: {sms_otp}")
+            user_sms_otp = simpledialog.askstring("OTP", "Enter the 6-digit OTP:")
+            if user_sms_otp != sms_otp:
+                self.status_var.set("Incorrect SMS OTP.")
+                messagebox.showerror("Error", "Incorrect SMS OTP.")
+                return
+
+            self.user_data = {
+                "name": name,
+                "dob": dob,
+                "email": email,
+                "password": hash_password(password),
+                "phone": phone
+            }
+            self.transaction_history = []
+            self.save_user_data()
+            self.logged_in = True
+            self.status_var.set("Registration Complete!")
+            messagebox.showinfo("Success", "Registration Complete!")
+            self.build_main_menu()
+
+        tk.Button(frame, text="Register", font=("Arial", 15, "bold"), bg=self.button_bg, fg=self.button_fg, command=register_action).pack(pady=20)
+        tk.Button(frame, text="Back", command=self.build_main_menu, font=("Arial", 13)).pack()
+
+    def build_forgot_password_ui(self):
+        """Build the forgot password screen."""
+        self.clear_window()
+        self.apply_theme()
+        frame = tk.Frame(self.root, bg=self.bg_color)
+        frame.pack(expand=True, fill="both")
+        self.build_status_bar()
+        tk.Label(frame, text="🔑 Forgot Password", font=("Arial", 24, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=30)
+        email_entry = self.add_entry(frame, "Registered Email", tooltip="Enter your registered email")
+
+        def reset_action():
+            self.update_activity()
+            email = email_entry.get().strip()
+            if not email:
+                self.status_var.set("Please enter your registered email.")
+                messagebox.showerror("Error", "Please enter your registered email.")
+                return
+            if self.user_data.get("email") != email:
+                self.status_var.set("Email not found.")
+                messagebox.showerror("Error", "Email not found.")
+                return
+
+            # Simulate Email OTP
+            email_otp = str(random.randint(10, 99))
+            messagebox.showinfo("Email OTP", f"Simulated Email OTP: {email_otp}")
+            user_email_otp = simpledialog.askstring("OTP", "Enter the 2-digit OTP:")
+            if user_email_otp != email_otp:
+                self.status_var.set("Incorrect Email OTP.")
+                messagebox.showerror("Error", "Incorrect Email OTP.")
+                return
+
+            new_password = simpledialog.askstring("Reset Password", "Enter new password:", show="*")
+            if not new_password or len(new_password) < 6:
+                self.status_var.set("Password must be at least 6 characters.")
+                messagebox.showerror("Error", "Password must be at least 6 characters.")
+                return
+            self.user_data["password"] = hash_password(new_password)
+            self.save_user_data()
+            self.status_var.set("Password reset successful!")
+            messagebox.showinfo("Success", "Password reset successful!")
+            self.build_main_menu()
+
+        tk.Button(frame, text="Reset Password", font=("Arial", 15, "bold"), bg=self.button_bg, fg=self.button_fg, command=reset_action).pack(pady=20)
+        tk.Button(frame, text="Back", command=self.build_main_menu, font=("Arial", 13)).pack()
+
+    def build_dashboard(self):
+        """Build the dashboard screen."""
+        self.clear_window()
+        self.apply_theme()
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(expand=True, fill="both")
+        self.build_sidebar(main_frame)
+        self.build_status_bar()
+        content = tk.Frame(main_frame, bg=self.bg_color)
+        content.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+        tk.Label(content, text="📊 Dashboard", font=("Arial", 24, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=10)
+        tk.Label(content, text=f"Hello, {self.user_data.get('name', 'User')}!", font=("Arial", 15), bg=self.bg_color, fg=self.fg_color).pack(pady=5)
+        # Portfolio Table
+        columns = ("Stock", "Shares", "Price", "Value")
+        style = ttk.Style()
+        style.configure("Treeview.Heading", font=("Arial", 13, "bold"))
+        style.configure("Treeview", font=("Arial", 12), rowheight=28)
+        tree = ttk.Treeview(content, columns=columns, show="headings", height=8)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=120)
+        portfolio = [
+            ("AAPL", 10, 150, 1500),
+            ("GOOGL", 5, 2800, 14000),
+            ("TSLA", 2, 700, 1400)
+        ]
+        for row in portfolio:
+            tree.insert("", "end", values=row)
+        tree.pack(pady=10)
+        # Add a button to simulate a transaction
+        tk.Button(content, text="Simulate Buy", font=("Arial", 13), bg=self.button_bg, fg=self.button_fg, command=self.simulate_transaction).pack(pady=10)
+
+    def build_transactions(self):
+        """Build the transaction history screen."""
+        self.clear_window()
+        self.apply_theme()
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(expand=True, fill="both")
+        self.build_sidebar(main_frame)
+        self.build_status_bar()
+        content = tk.Frame(main_frame, bg=self.bg_color)
+        content.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+        tk.Label(content, text="🧾 Transaction History", font=("Arial", 24, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=10)
+        columns = ("Date", "Type", "Stock", "Shares", "Price", "Total")
+        style = ttk.Style()
+        style.configure("Treeview.Heading", font=("Arial", 13, "bold"))
+        style.configure("Treeview", font=("Arial", 12), rowheight=28)
+        tree = ttk.Treeview(content, columns=columns, show="headings", height=10)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=110)
+        for tx in self.transaction_history:
+            tree.insert("", "end", values=tx)
+        tree.pack(pady=10)
+
+    def build_profile(self):
+        """Build the profile screen."""
+        self.clear_window()
+        self.apply_theme()
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(expand=True, fill="both")
+        self.build_sidebar(main_frame)
+        self.build_status_bar()
+        content = tk.Frame(main_frame, bg=self.bg_color)
+        content.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+        tk.Label(content, text="👤 Profile", font=("Arial", 24, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=10)
+        info = [
+            ("Name", self.user_data.get("name", "")),
+            ("DOB", self.user_data.get("dob", "")),
+            ("Email", self.user_data.get("email", "")),
+            ("Phone", self.user_data.get("phone", ""))
+        ]
+        for label, value in info:
+            row = tk.Frame(content, bg=self.bg_color)
+            row.pack(fill="x", padx=40, pady=5)
+            tk.Label(row, text=f"{label}:", font=("Arial", 14, "bold"), width=10, anchor="w", bg=self.bg_color, fg=self.fg_color).pack(side="left")
+            tk.Label(row, text=value, font=("Arial", 14), anchor="w", bg=self.bg_color, fg=self.fg_color).pack(side="left")
+        tk.Button(content, text="Edit Profile", width=15, command=self.build_edit_profile, font=("Arial", 13), bg=self.button_bg, fg=self.button_fg).pack(pady=10)
+
+    def build_edit_profile(self):
+        """Build the edit profile screen."""
+        self.clear_window()
+        self.apply_theme()
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(expand=True, fill="both")
+        self.build_sidebar(main_frame)
+        self.build_status_bar()
+        content = tk.Frame(main_frame, bg=self.bg_color)
+        content.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+        tk.Label(content, text="✏️ Edit Profile", font=("Arial", 22, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=10)
+        name_entry = self.add_entry(content, "Full Name", tooltip="Edit your full name")
+        dob_entry = self.add_entry(content, "Date of Birth (YYYY-MM-DD)", tooltip="Format: YYYY-MM-DD")
+        phone_entry = self.add_entry(content, "Mobile Number", tooltip="10 digit mobile number")
+        name_entry.insert(0, self.user_data.get("name", ""))
+        dob_entry.insert(0, self.user_data.get("dob", ""))
+        phone_entry.insert(0, self.user_data.get("phone", ""))
+
+        def save_profile():
+            self.update_activity()
+            name = name_entry.get().strip()
+            dob = dob_entry.get().strip()
+            phone = phone_entry.get().strip()
+            if not all([name, dob, phone]):
+                self.status_var.set("All fields are required!")
+                messagebox.showerror("Error", "All fields are required!")
+                return
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", dob):
+                self.status_var.set("DOB must be in YYYY-MM-DD format.")
+                messagebox.showerror("Error", "DOB must be in YYYY-MM-DD format.")
+                return
+            if not re.match(r"^\d{10}$", phone):
+                self.status_var.set("Phone number must be 10 digits.")
+                messagebox.showerror("Error", "Phone number must be 10 digits.")
+                return
+            self.user_data["name"] = name
+            self.user_data["dob"] = dob
+            self.user_data["phone"] = phone
+            self.save_user_data()
+            self.status_var.set("Profile updated!")
+            messagebox.showinfo("Success", "Profile updated!")
+            self.build_profile()
+
+        tk.Button(content, text="Save", font=("Arial", 13, "bold"), bg=self.button_bg, fg=self.button_fg, command=save_profile).pack(pady=20)
+
+    def build_change_password(self):
+        """Build the change password screen."""
+        self.clear_window()
+        self.apply_theme()
+        main_frame = tk.Frame(self.root, bg=self.bg_color)
+        main_frame.pack(expand=True, fill="both")
+        self.build_sidebar(main_frame)
+        self.build_status_bar()
+        content = tk.Frame(main_frame, bg=self.bg_color)
+        content.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+        tk.Label(content, text="🔒 Change Password", font=("Arial", 22, "bold"), bg=self.bg_color, fg=self.fg_color).pack(pady=10)
+        old_entry = self.add_entry(content, "Current Password", show="*", tooltip="Enter your current password")
+        new_entry = self.add_entry(content, "New Password", show="*", tooltip="At least 6 chars, letters & numbers")
+
+        def change_password_action():
+            self.update_activity()
+            old = old_entry.get().strip()
+            new = new_entry.get().strip()
+            if not old or not new:
+                self.status_var.set("All fields are required!")
+                messagebox.showerror("Error", "All fields are required!")
+                return
+            if hash_password(old) != self.user_data.get("password"):
+                self.status_var.set("Current password incorrect.")
+                messagebox.showerror("Error", "Current password incorrect.")
+                return
+            if len(new) < 6 or not re.search(r"[A-Za-z]", new) or not re.search(r"\d", new):
+                self.status_var.set("Password must be at least 6 characters and include letters and numbers.")
+                messagebox.showerror("Error", "Password must be at least 6 characters and include letters and numbers.")
+                return
+            self.user_data["password"] = hash_password(new)
+            self.save_user_data()
+            self.status_var.set("Password changed successfully!")
+            messagebox.showinfo("Success", "Password changed successfully!")
+            self.build_profile()
+
+        tk.Button(content, text="Change Password", font=("Arial", 13, "bold"), bg=self.button_bg, fg=self.button_fg, command=change_password_action).pack(pady=20)
+
+    def add_entry(self, parent, label, show=None, tooltip=None):
+        """Add a labeled entry with optional tooltip."""
+        tk.Label(parent, text=label, bg=self.bg_color, fg=self.fg_color, anchor='w', font=("Arial", 14, "bold")).pack(fill="x", padx=60)
+        entry = tk.Entry(parent, width=35, show=show, font=("Arial", 13))
+        entry.pack(padx=60, pady=5)
+        if tooltip:
+            ToolTip(entry, tooltip)
+        return entry
+
+    def sign_out(self):
+        """Sign out the current user."""
+        self.logged_in = False
+        self.status_var.set("Signed out.")
+        self.build_main_menu()
+
+    def delete_account(self):
+        """Delete the current user's account."""
+        self.update_activity()
+        if messagebox.askyesno("Delete Account", "Are you sure you want to delete your account? This cannot be undone."):
+            if os.path.exists(USER_FILE):
+                os.remove(USER_FILE)
+            self.user_data = {}
+            self.transaction_history = []
+            self.logged_in = False
+            self.status_var.set("Account deleted.")
+            messagebox.showinfo("Deleted", "Your account has been deleted.")
+            self.build_main_menu()
+
+    def show_about(self):
+        """Show the About/Help dialog."""
+        self.update_activity()
+        messagebox.showinfo("About StockTrader",
+            "StockTrader Bot UI\n"
+            "Version 1.0\n\n"
+            "This is a demo stock trading bot interface.\n"
+            "Developed with Tkinter.\n\n"
+            "For support, use the Contact Support option."
+        )
+
+    def contact_support(self):
+        """Show a contact support dialog."""
+        self.update_activity()
+        support_email = "support@stocktrader.com"
+        messagebox.showinfo("Contact Support",
+            f"For help, email us at:\n{support_email}\n\n"
+            "Or call: +1-800-STOCKTRADER"
+        )
+
+    def simulate_transaction(self):
+        """Simulate a buy transaction and add to history."""
+        self.update_activity()
+        stocks = ["AAPL", "GOOGL", "TSLA", "MSFT", "AMZN"]
+        stock = random.choice(stocks)
+        shares = random.randint(1, 10)
+        price = random.randint(100, 3000)
+        total = shares * price
+        tx = (time.strftime("%Y-%m-%d %H:%M"), "Buy", stock, shares, price, total)
+        self.transaction_history.append(tx)
+        self.save_user_data()
+        self.status_var.set(f"Simulated buy: {shares} {stock} at {price}")
+        messagebox.showinfo("Transaction", f"Bought {shares} shares of {stock} at ${price} each.")
+        self.build_transactions()
+
+    def update_activity(self):
+        """Update the last activity timestamp."""
+        self.last_activity = time.time()
+
+    def start_logout_timer(self):
+        """Start a timer to auto-logout after inactivity."""
+        def timer_loop():
+            while True:
+                if self.logged_in and (time.time() - self.last_activity > 300):  # 5 minutes
+                    self.logged_in = False
+                    self.status_var.set("Logged out due to inactivity.")
+                    self.build_main_menu()
+                time.sleep(5)
+        t = threading.Thread(target=timer_loop, daemon=True)
+        t.start()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = StockApp(root)
+    root.mainloop()
